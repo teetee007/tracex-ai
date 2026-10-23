@@ -1,0 +1,5 @@
+{
+  "name": "TC-01: Successful attack sequence",
+  "description": "Password guessing against the portal, admin data export, SSH reuse of the stolen password, discovery, local account creation and exfiltration over scp, hidden among normal staff activity, a backup cron job and an unrelated scanner.",
+  "syslog_year": 2026
+}
