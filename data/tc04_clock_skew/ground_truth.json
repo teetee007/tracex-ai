@@ -1,0 +1,62 @@
+{
+  "attack_events": {
+    "auth": [
+      "auth.csv:3",
+      "auth.csv:4",
+      "auth.csv:5",
+      "auth.csv:6",
+      "auth.csv:7",
+      "auth.csv:8",
+      "auth.csv:9",
+      "auth.csv:10",
+      "auth.csv:11",
+      "auth.csv:12",
+      "auth.csv:13",
+      "auth.csv:14",
+      "auth.csv:15",
+      "auth.csv:16",
+      "auth.csv:17",
+      "auth.csv:18"
+    ],
+    "web": [
+      "web_access.json#6",
+      "web_access.json#7",
+      "web_access.json#8",
+      "web_access.json#9"
+    ],
+    "system": [
+      "system.csv:4",
+      "system.csv:5",
+      "system.csv:6",
+      "system.csv:7",
+      "system.csv:8",
+      "system.csv:9",
+      "system.csv:10"
+    ]
+  },
+  "expected_incidents": 1,
+  "entities": {
+    "attacker_ip": "203.0.113.45",
+    "compromised_user": "jsmith",
+    "affected_host": "web-01",
+    "attacker_session": "sess-a71c3e",
+    "created_account": "backup_svc",
+    "exfiltrated_file": "/var/backups/customers.sql"
+  },
+  "clock_offset_minutes": {
+    "system": -5
+  },
+  "expected_gaps": [
+    "clock_skew:system"
+  ],
+  "expected_techniques": {
+    "T1110.001": "Brute Force: Password Guessing",
+    "T1078": "Valid Accounts",
+    "T1021.004": "Remote Services: SSH",
+    "T1033": "System Owner/User Discovery",
+    "T1087.001": "Account Discovery: Local Account",
+    "T1083": "File and Directory Discovery",
+    "T1136.001": "Create Account: Local Account",
+    "T1048": "Exfiltration Over Alternative Protocol"
+  }
+}

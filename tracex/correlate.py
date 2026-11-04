@@ -23,6 +23,7 @@ class Link:
     target_ref: str
     reason: str
     basis: str  # "observed" or "inferred"
+    time_adjusted: bool = False  # depends on a clock-corrected or time-uncertain event
 
 
 @dataclass
@@ -56,6 +57,7 @@ def build_links(events):
     logins = timed[(timed["event_type"] == "auth_login") & (timed["outcome"] == "success")
                    & timed["host"].isin(set(system["host"]))]
     for _, cmd in system.iterrows():
+        adjusted, note = _time_note(cmd)
         # The system log has no session ID, so a command is attributed to the latest login of the
         # same user to the same host. This is an inference and is labelled as one.
         prior = logins[(logins["user"] == cmd["user"]) & (logins["host"] == cmd["host"])
@@ -66,15 +68,26 @@ def build_links(events):
             minutes = (cmd["timestamp"] - login["timestamp"]).total_seconds() / 60
             links.append(Link(login["raw_ref"], cmd["raw_ref"],
                               f"same user '{cmd['user']}' on {cmd['host']}, {minutes:.0f} min after that login "
-                              "(system log has no session ID)", "inferred"))
+                              f"(system log has no session ID){note}", "inferred", adjusted))
 
         # An IP address written inside a command line is an explicit identifier.
         for ip in set(IP_IN_TEXT.findall(cmd["action"])):
             earlier = timed[(timed["src_ip"] == ip) & (timed["timestamp"] <= cmd["timestamp"])]
             if not earlier.empty:
                 links.append(Link(earlier.iloc[-1]["raw_ref"], cmd["raw_ref"],
-                                  f"command line contains IP {ip}", "observed"))
+                                  f"command line contains IP {ip}{note}", "observed", adjusted))
     return links
+
+
+def _time_note(row):
+    """(time_adjusted, reason suffix) for an event whose time was corrected or is uncertain."""
+    correction = row.get("time_correction_s", 0.0)
+    uncertainty = row.get("time_uncertainty_s", 0.0)
+    if correction:
+        return True, f"; host clock corrected by +{correction / 60:.1f} min"
+    if pd.isna(uncertainty):
+        return True, "; host clock possibly skewed, order uncertain"
+    return False, ""
 
 
 def _graph(events, links):

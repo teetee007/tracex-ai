@@ -1,0 +1,5 @@
+{
+  "name": "TC-05: Unrelated events",
+  "description": "The TC-01 attack plus look-alike activity in the same minutes: a neighbouring external IP guessing 'admin' without success, and a travelling employee logging in from a hotel.",
+  "syslog_year": 2026
+}

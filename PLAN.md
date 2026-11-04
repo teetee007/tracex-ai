@@ -70,5 +70,29 @@ are truly part of the attack, so recall / false positives can be computed honest
   high-severity detections, evaluation against ground truth (`tracex/evaluation.py`),
   Investigation + Evaluation tabs. TC-01: 27/27 attack events linked, 0 false positives,
   scanner decoy kept out. 18 tests pass.
-- **Next — Day 4:** attack graph (NetworkX + PyVis), MITRE ATT&CK mapping per event with evidence,
-  AI explanation (evidence-restricted, rule-based fallback).
+- **UI redesign (23 Oct):** dark SOC "command center": KPI strip, threat-score gauge with point
+  breakdown, entity attack graph (labelled edges with chain steps, dashed = inferred, offline
+  vis-network), attack-progression stepper, activity chart, incident facts. 24 tests pass.
+- **Interactive tabs (23 Oct):** click-to-inspect timeline with incident halos and zoom slider;
+  detection cards with severity filters and evidence; Evidence explorer (search, filters,
+  forensic record card showing chain step, link reason, detections, original fields); data-quality
+  health ring, coverage chart, clickable issues; evaluation rings, confusion matrix, per-source bars.
+  25 tests pass.
+- **Professional theme (23 Oct):** monochrome HUD (thin frames, corner brackets, monospaced
+  numbers, grid background, status footer). Colour carries meaning only: white/grey neutral,
+  green normal, orange warning/medium, red critical/attacker.
+- **Live visuals (23 Oct):** threat score and quality/evaluation rings animate (ease-in-out count-up,
+  moving arc head, ticks light up) whenever they scroll into view or their tab opens; KPIs count up;
+  progression steps slide in; attack graph has "Replay attack" (edges revealed in chain order with a
+  step caption and progress bar), auto-played the first time it is on screen. 26 tests pass.
+- **Master build (27 Oct):** TC-02..TC-05 generated (TC-01 byte-identical). Clock-skew investigation
+  (`tracex/clock.py`): TC-04 recall 81% -> 100%, 2 incidents -> 1, no change to other scenarios.
+  ATT&CK mapping with evidence (8/8 expected techniques), typed and citation-checked explanation with
+  gap detection, lockout / external-SSH mitigation replay (0 legitimate logins blocked), evaluation lab +
+  docs/TEST_RESULTS.md, offline 3D investigation graph with inspector and synchronized replay. 76 tests.
+- **Forensic credibility pack + 3 pages (27 Oct):** Investigate / Evidence / Validate pages; chain of custody
+  (sealed SHA-256 manifests, record-level tamper detection, in-app tamper simulation); Sigma, ATT&CK
+  Navigator and STIX 2.1 exports; incident report (Markdown + HTML). 99 tests.
+- **Remaining for 29 Oct:** report (10-15 pp), 4 slides, rehearse docs/DEMO_SCRIPT.md. Optional: LLM narrative.
+- **Was next — Day 4 (remaining):** MITRE ATT&CK mapping per event with evidence; AI explanation
+  (evidence-restricted, rule-based fallback, fact vs hypothesis).

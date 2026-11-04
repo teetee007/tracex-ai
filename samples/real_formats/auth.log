@@ -1,0 +1,4 @@
+Oct 20 00:00:02 web-01 CRON[901]: pam_unix(cron:session): session opened for user root
+Oct 20 02:16:10 web-01 sshd[4107]: Accepted password for jsmith from 203.0.113.45 port 52507 ssh2
+Oct 20 02:20:09 web-01 sudo:   jsmith : TTY=pts/0 ; PWD=/home/jsmith ; USER=root ; COMMAND=/usr/sbin/useradd -m -s /bin/bash backup_svc
+Oct 20 08:45:00 web-01 sshd[4114]: Accepted password for alice from 10.0.1.11 port 52514 ssh2

@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TraceX 3D investigation</title>
+<style>
+:root {
+  --bg:#07090c; --panel:#0c1015; --panel2:#10151c; --line:rgba(148,163,184,.16); --line2:rgba(148,163,184,.08);
+  --text:#e6edf3; --muted:#8b98a7; --dim:#5b6673;
+  --accent:#67e8f9; --web:#38bdf8; --auth:#a78bfa; --system:#e2e8f0;
+  --threat:#ef4444; --amber:#f5a524;
+  --mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; background:transparent; color:var(--text); font-family:var(--sans); font-size:12px; }
+#app { display:grid; grid-template-columns: minmax(0,1fr) 320px; grid-template-rows: auto 520px auto;
+  border:1px solid var(--line); background:var(--bg); position:relative; }
+
+/* toolbar */
+#toolbar { grid-column:1; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 10px;
+  border-bottom:1px solid var(--line); background:linear-gradient(180deg,#0b0f14,#090c10); }
+.grp { display:flex; gap:2px; align-items:center; padding-right:8px; margin-right:2px; border-right:1px solid var(--line2); }
+.grp:last-child { border-right:none; }
+.lbl { color:var(--dim); font:500 10px var(--mono); text-transform:uppercase; letter-spacing:.1em; margin-right:4px; }
+button, select { font:500 10.5px var(--mono); color:var(--muted); background:transparent; border:1px solid var(--line);
+  padding:4px 8px; cursor:pointer; letter-spacing:.04em; border-radius:2px; transition:color .15s, border-color .15s, background .15s; }
+button:hover, select:hover { color:var(--text); border-color:rgba(148,163,184,.4); }
+button:focus-visible, select:focus-visible, canvas:focus-visible { outline:1px solid var(--accent); outline-offset:1px; }
+button.on { color:var(--bg); background:var(--accent); border-color:var(--accent); }
+button.chip.web.on { background:var(--web); border-color:var(--web); }
+button.chip.auth.on { background:var(--auth); border-color:var(--auth); }
+button.chip.system.on { background:var(--system); border-color:var(--system); }
+select { background:#0b0f14; }
+
+/* stage */
+#stage { grid-column:1; position:relative; overflow:hidden;
+  background: radial-gradient(900px 420px at 50% 45%, rgba(103,232,249,.05), transparent 70%), var(--bg); }
+#gl { width:100%; height:100%; display:block; cursor:grab; touch-action:none; }
+#gl.dragging { cursor:grabbing; }
+#hud-tl { position:absolute; left:12px; top:10px; pointer-events:none; }
+#hud-tl .t { font:600 12px var(--sans); letter-spacing:.04em; }
+#hud-tl .s { color:var(--muted); font:500 10.5px var(--mono); margin-top:3px; }
+#legend { position:absolute; left:12px; bottom:10px; display:flex; flex-wrap:wrap; gap:12px; font:500 10px var(--mono);
+  color:var(--muted); text-transform:uppercase; letter-spacing:.06em; pointer-events:none; max-width:70%; }
+#legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+#legend s { display:inline-block; width:18px; height:0; border-top:1.5px solid; margin-right:5px; vertical-align:2px; text-decoration:none; }
+#caveat { position:absolute; right:10px; bottom:10px; font:500 10px var(--mono); color:var(--dim); pointer-events:none; }
+#tip { position:absolute; pointer-events:none; background:rgba(9,12,16,.96); border:1px solid rgba(148,163,184,.3);
+  padding:7px 9px; font:11px var(--mono); max-width:320px; display:none; z-index:5; line-height:1.45; }
+#tip b { color:var(--text); font-weight:600; } #tip .m { color:var(--muted); }
+#empty { position:absolute; inset:0; display:none; place-items:center; color:var(--muted); font:12px var(--mono); text-align:center; }
+#skewbar { position:absolute; left:12px; top:50px; background:rgba(245,165,36,.08); pointer-events:auto; cursor:help;
+  border:1px solid rgba(245,165,36,.45); color:#f7c26b; padding:3px 8px; font:500 10.5px/1.45 var(--mono); display:none; }
+
+/* inspector */
+#inspector { grid-column:2; grid-row:1 / span 3; border-left:1px solid var(--line); background:var(--panel);
+  overflow-y:auto; contain:size; /* a long record scrolls inside; it never stretches the graph rows */ }
+#inspector .hd { padding:10px 12px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+#inspector .hd .t { font:600 11px var(--mono); text-transform:uppercase; letter-spacing:.12em; }
+#ins { padding:12px; }
+.ins-empty { color:var(--dim); font:11.5px/1.6 var(--mono); padding:24px 4px; text-align:center; }
+.k { color:var(--dim); font:500 9.5px var(--mono); text-transform:uppercase; letter-spacing:.12em; margin:12px 0 4px; }
+.act { font:600 13px/1.4 var(--mono); word-break:break-word; }
+.ref { color:var(--accent); font:500 11px var(--mono); }
+.row { display:grid; grid-template-columns: 92px 1fr; gap:3px 10px; font:11px/1.5 var(--mono); }
+.row .a { color:var(--muted); } .row .b { word-break:break-all; }
+.tag { display:inline-block; max-width:100%; font:500 9.5px/1.45 var(--mono); text-transform:uppercase; letter-spacing:.06em;
+  border:1px solid currentColor; padding:1px 6px; margin:0 4px 4px 0; border-radius:2px; white-space:normal; overflow-wrap:anywhere; }
+.tag.observed { color:var(--accent); } .tag.inferred { color:var(--amber); border-style:dashed; }
+.tag.high { color:var(--threat); } .tag.medium { color:var(--amber); } .tag.low, .tag.none { color:var(--muted); }
+.tag.candidate { color:var(--amber); border-style:dashed; } .tag.mapped { color:var(--text); }
+.box { border-left:2px solid var(--c, var(--accent)); background:rgba(148,163,184,.05); padding:7px 9px; font:11px/1.5 var(--mono); margin-top:6px; }
+.box .m { color:var(--muted); }
+.ins-btns { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
+
+/* timeline */
+#timeline { grid-column:1; border-top:1px solid var(--line); background:linear-gradient(180deg,#090c10,#07090c); padding:8px 10px 10px; }
+#ribbon { display:flex; gap:3px; margin:0 0 8px; }
+#ribbon .st { flex:1; min-width:0; padding:6px 8px 6px 16px; font:500 10px var(--mono); text-transform:uppercase;
+  letter-spacing:.05em; color:var(--dim); background:#0e1318; cursor:default; position:relative;
+  clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 9px 50%);
+  transition:background .25s, color .25s; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#ribbon .st:first-child { padding-left:9px; clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%); }
+#ribbon .st small { display:block; font-size:9.5px; color:inherit; opacity:.8; letter-spacing:0; text-transform:none; }
+#ribbon .st.seen { color:#c7cdd4; background:#1a1416; cursor:pointer; }
+#ribbon .st.done { color:#fff; background:rgba(239,68,68,.32); cursor:pointer; }
+#ribbon .st.now { color:#fff; background:var(--threat); box-shadow:0 0 18px rgba(239,68,68,.6); }
+#tl-controls { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px; }
+#scrub { flex:1; min-width:140px; accent-color: var(--accent); }
+#tl-now { font:500 10.5px var(--mono); color:var(--muted); min-width:220px; }
+#tl-now b { color:var(--text); }
+#tl { width:100%; height:120px; display:block; cursor:pointer; }
+#ordering { color:var(--dim); font:10px var(--mono); margin-top:4px; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+/* narrow frames: graph, then timeline, then the inspector underneath (must come after the base rules) */
+@media (max-width: 720px) {
+  #app { grid-template-columns: minmax(0,1fr); grid-template-rows: auto 440px auto auto; }
+  #toolbar, #stage, #timeline { grid-column:1; }
+  #inspector { grid-column:1; grid-row:4; border-left:none; border-top:1px solid var(--line); contain:none; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar" role="toolbar" aria-label="Graph controls">
+    <div class="grp"><span class="lbl">Scope</span>
+      <select id="scope" aria-label="Which events to show">
+        <option value="incident">Incident</option><option value="context">Incident + context</option><option value="all">All events</option>
+      </select></div>
+    <div class="grp"><span class="lbl">Layers</span>
+      <button class="chip auth on" data-src="auth" aria-pressed="true">Auth</button>
+      <button class="chip web on" data-src="web" aria-pressed="true">Web</button>
+      <button class="chip system on" data-src="system" aria-pressed="true">System</button>
+      <button id="explode" aria-pressed="false" title="Separate the log sources into layers">Explode</button></div>
+    <div class="grp"><span class="lbl">Focus</span>
+      <select id="hlmode" aria-label="What to highlight around the selected event">
+        <option value="neighbors">Direct links</option><option value="component">Connected component</option>
+        <option value="precursors">Precursors</option><option value="followon">Follow-on</option>
+      </select>
+      <button id="isolate" aria-pressed="false" title="Hide everything outside the highlighted set">Isolate</button></div>
+    <div class="grp"><span class="lbl">View</span>
+      <button id="fit" title="Fit visible events (F)">Fit</button>
+      <button id="reset" title="Reset camera and selection (R)">Reset</button>
+      <button id="flat" aria-pressed="false" title="Flat 2D view">2D</button></div>
+  </div>
+
+  <div id="stage">
+    <canvas id="gl" tabindex="0" aria-label="3D attack graph. Drag to rotate, scroll to zoom, right-drag or shift-drag to pan, click an event to inspect it. Arrow keys rotate, plus and minus zoom, N and P step the replay."></canvas>
+    <div id="hud-tl"><div class="t" id="title"></div><div class="s" id="sub"></div></div>
+    <div id="skewbar" role="status"></div>
+    <div id="legend">
+      <span><i style="background:var(--auth)"></i>auth</span><span><i style="background:var(--web)"></i>web</span>
+      <span><i style="background:var(--system)"></i>system</span>
+      <span><i style="border:2px solid var(--threat)"></i>rule match</span>
+      <span><s style="border-color:rgba(226,232,240,.7)"></s>observed link</span>
+      <span><s style="border-color:rgba(226,232,240,.7);border-top-style:dashed"></s>inferred link</span>
+      <span><s style="border-color:var(--amber);border-top-style:dashed"></s>clock-adjusted</span>
+    </div>
+    <div id="caveat">Links show shared evidence, not proven cause.</div>
+    <div id="tip"></div>
+    <div id="empty"></div>
+  </div>
+
+  <aside id="inspector" aria-label="Event inspector">
+    <div class="hd"><span class="t">Event inspector</span><span class="ref" id="ins-ref"></span></div>
+    <div id="ins"><div class="ins-empty">Click an event in the graph or timeline to inspect its original record, the rules it matched and why it is part of the incident.</div></div>
+  </aside>
+
+  <div id="timeline">
+    <div id="ribbon" role="list" aria-label="Attack stages (MITRE ATT&amp;CK tactics)"></div>
+    <div id="tl-controls" role="group" aria-label="Replay controls">
+      <button id="first" title="Jump to first chain step" aria-label="First step">⏮</button>
+      <button id="prev" title="Previous step (P)" aria-label="Previous step">◀</button>
+      <button id="play" title="Play / pause (Space)" aria-label="Play">▶ Play</button>
+      <button id="next" title="Next step (N)" aria-label="Next step">▶</button>
+      <button id="last" title="Jump to last chain step" aria-label="Last step">⏭</button>
+      <select id="speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+      <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Scrub through the chain">
+      <select id="rulef" aria-label="Filter by rule"><option value="">All rules</option></select>
+      <button id="flagged" aria-pressed="false" title="Only events that matched a rule">Flagged only</button>
+      <span id="tl-now" aria-live="polite"></span>
+    </div>
+    <canvas id="tl" aria-label="Timeline of events by source. Click an event to select it."></canvas>
+    <div id="ordering"></div>
+  </div>
+</div>
+<div class="sr" id="sr" aria-live="polite"></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- Streamlit component protocol (no npm)
+const ST = {
+  send(type, extra) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*"); },
+  ready() { this.send("streamlit:componentReady", { apiVersion: 1 }); },
+  height(h) { this.send("streamlit:setFrameHeight", { height: h }); },
+  value(v) { this.send("streamlit:setComponentValue", { value: v, dataType: "json" }); },
+};
+
+// ---------------------------------------------------------------- constants
+const COLOR = { auth: "#a78bfa", web: "#38bdf8", system: "#e2e8f0" };
+const GLOW = { auth: "rgba(167,139,250,.32)", web: "rgba(56,189,248,.30)", system: "rgba(226,232,240,.22)" };
+const THREAT = "#ef4444", AMBER = "#f5a524", ACCENT = "#67e8f9";
+const LANE_Y = { web: 16, auth: 0, system: -16 };
+const SEC_W = 0.06, GAP_CAP = 150;               // world units per second; idle gaps longer than 150 s are compressed
+const REDUCED = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $ = id => document.getElementById(id);
+const gl = $("gl"), ctx = gl.getContext("2d"), tlc = $("tl"), tctx = tlc.getContext("2d");
+
+// ---------------------------------------------------------------- state
+const S = {
+  data: null, dataId: null, nodes: [], byId: new Map(), edges: [], adj: new Map(),
+  cam: { yaw: -0.5, pitch: 0.46, dist: 80, tx: 0, ty: 0, tz: 0 },
+  scope: "incident", layers: { auth: true, web: true, system: true }, explode: false, flat: false,
+  hlMode: "neighbors", isolate: false, flaggedOnly: false, ruleFilter: "",
+  sel: null, hover: null, hl: null, visible: [], screen: new Map(),
+  seq: [], cur: -1, playing: false, speed: 1, timer: null,
+  anims: [], raf: 0, drag: null, pointers: new Map(),
+};
+
+// ---------------------------------------------------------------- data in
+function onRender(args) {
+  const data = args.data;
+  if (!data || data.version !== 1) { showEmpty("Unsupported scene data."); return; }
+  if (data.data_id === S.dataId) { resize(); return; }     // a Streamlit rerun with the same data: keep state
+  const switching = S.dataId !== null;
+  S.dataId = data.data_id; S.data = data;
+  S.nodes = data.nodes.map(n => Object.assign({}, n, { p: { x: 0, y: 0, z: 0 }, q: { x: 0, y: 0, z: 0 } }));
+  S.byId = new Map(S.nodes.map(n => [n.id, n]));
+  S.edges = data.edges.filter(e => S.byId.has(e.a) && S.byId.has(e.b));
+  S.adj = new Map(S.nodes.map(n => [n.id, []]));
+  for (const e of S.edges) { S.adj.get(e.a).push({ o: e.b, e }); S.adj.get(e.b).push({ o: e.a, e }); }
+  S.seq = S.nodes.filter(n => n.in_chain).sort((a, b) => a.step - b.step).map(n => n.id);
+  S.scope = S.seq.length ? "incident" : "all"; $("scope").value = S.scope;
+  S.sel = null; S.hover = null; S.hl = null; S.cur = -1; stop();
+  // rule filter options from the data
+  const rules = [...new Set(S.nodes.flatMap(n => n.rules.map(r => r.rule)))].sort((a, b) => a.slice(1) - b.slice(1));
+  $("rulef").innerHTML = '<option value="">All rules</option>' + rules.map(r => `<option value="${r}">${r}</option>`).join("");
+  S.ruleFilter = "";
+  $("title").textContent = data.incident_id ? `${data.incident_id} · ${data.title}` : data.title;
+  $("ordering").textContent = "Ordering: " + data.ordering;
+  const skew = data.skew || [];
+  $("skewbar").style.display = skew.length ? "block" : "none";
+  $("skewbar").textContent = skew.map(s => `⧗ ${s.host} clock: ${s.status.replace("_", " ")}` +
+    (s.correction_s ? ` · +${(s.correction_s / 60).toFixed(1)} min applied` : " · not corrected")).join("   ");
+  $("skewbar").title = skew.map(s => s.explanation).join("\n\n");   // full reasoning on hover; also in the panel below
+  layout(true); inspect(null); updateReplayUI();
+  fit(!switching && !REDUCED);
+  resize();
+}
+
+window.addEventListener("message", ev => {
+  if (ev.data && ev.data.type === "streamlit:render") onRender(ev.data.args || {});
+});
+
+// ---------------------------------------------------------------- what is visible
+function passes(n) {
+  if (!S.layers[n.source]) return false;
+  if (S.flaggedOnly && !n.rules.length) return false;
+  if (S.ruleFilter && !n.rules.some(r => r.rule === S.ruleFilter)) return false;
+  return true;
+}
+function inScope(n) {
+  if (S.scope === "all" || !S.seq.length) return true;
+  if (n.in_chain) return true;
+  if (S.scope === "incident") return false;
+  return n.rules.length > 0 || S.adj.get(n.id).some(x => S.byId.get(x.o).in_chain);   // context
+}
+function computeVisible() {
+  S.visible = S.nodes.filter(n => inScope(n) && passes(n) && (!S.isolate || !S.hl || S.hl.has(n.id)));
+  const vis = new Set(S.visible.map(n => n.id));
+  S.visEdges = S.edges.filter(e => vis.has(e.a) && vis.has(e.b));
+  $("sub").textContent = `${S.visible.length} events · ${S.visEdges.length} links` +
+    (S.data.untimed ? ` · ${S.data.untimed} untimed not placed` : "") + (S.flat ? " · 2D" : "");
+  if (!S.visible.length) showEmpty(S.nodes.length ? "No events match these filters." : "No timed events in this dataset.");
+  else $("empty").style.display = "none";
+}
+
+// ---------------------------------------------------------------- layout: x = time (idle gaps compressed), y = source lane, z = actor
+function layout(snap) {
+  computeVisible();
+  const vis = [...S.visible].sort((a, b) => a.t - b.t || a.id.localeCompare(b.id));
+  let x = 0, prev = null;
+  const xs = new Map();
+  for (const n of vis) {
+    if (prev !== null) x += Math.min(Math.max(0, (n.t - prev) / 1000), GAP_CAP) * SEC_W + 1.4;
+    xs.set(n.id, x); prev = n.t;
+  }
+  const mid = x / 2;
+  const actors = new Map();
+  const actorOf = n => n.src_ip || n.user || n.host;
+  const primary = S.seq.length ? actorOf(S.byId.get(S.seq[0])) : null;
+  if (primary) actors.set(primary, 0);
+  for (const n of vis) {
+    const a = actorOf(n);
+    if (!actors.has(a)) { const k = actors.size; actors.set(a, (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 12); }
+  }
+  const spread = S.explode ? 2.6 : 1;
+  for (const n of vis) {
+    n.q = { x: xs.get(n.id) - mid, y: (S.flat ? 0 : LANE_Y[n.source] * spread), z: S.flat ? LANE_Y[n.source] * spread * -1 : actors.get(actorOf(n)) };
+    if (snap) n.p = { ...n.q };
+  }
+  if (!snap) animate({ kind: "layout", dur: REDUCED ? 0 : 520 });
+  dirty();
+}
+
+// ---------------------------------------------------------------- camera + projection
+function viewSize() { return { w: gl.clientWidth, h: gl.clientHeight }; }
+function project(p) {
+  const c = S.cam;
+  let x = p.x - c.tx, y = p.y - c.ty, z = p.z - c.tz;
+  const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), cp = Math.cos(c.pitch), sp = Math.sin(c.pitch);
+  let x1 = x * cy - z * sy, z1 = x * sy + z * cy;
+  let y1 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  const depth = z2 + c.dist;
+  if (depth < 1) return null;
+  const { w, h } = viewSize(), f = Math.min(w, h) * 1.1;
+  return { x: w / 2 + x1 * f / depth, y: h / 2 - y1 * f / depth, s: f / depth, d: depth };
+}
+function fit(entrance) {
+  const pts = S.visible.map(n => n.q);
+  if (!pts.length) return;
+  const min = k => Math.min(...pts.map(p => p[k])), max = k => Math.max(...pts.map(p => p[k]));
+  const c = { x: (min("x") + max("x")) / 2, y: (min("y") + max("y")) / 2, z: (min("z") + max("z")) / 2 };
+  const r = Math.max(8, Math.hypot(max("x") - min("x"), max("y") - min("y"), max("z") - min("z")) / 2);
+  const { w, h } = viewSize(), f = Math.min(w, h) * 1.1;
+  const dist = r * f / (Math.min(w, h) * 0.56) + r * 0.25;
+  const to = { tx: c.x, ty: c.y, tz: c.z, dist, yaw: S.flat ? 0 : S.cam.yaw, pitch: S.flat ? 0 : S.cam.pitch };
+  if (entrance) { Object.assign(S.cam, { dist: dist * 1.9, yaw: to.yaw - 0.6 }); camTo(to, 1100); }
+  else camTo(to, REDUCED ? 0 : 450);
+}
+function camTo(to, dur) {
+  if (!dur) { Object.assign(S.cam, to); dirty(); return; }
+  animate({ kind: "cam", from: { ...S.cam }, to, dur });
+}
+
+// ---------------------------------------------------------------- animation loop (only runs while something moves)
+function animate(a) { a.t0 = performance.now(); S.anims = S.anims.filter(x => x.kind !== a.kind || a.kind === "pulse" || a.kind === "flash"); S.anims.push(a); dirty(); }
+const ease = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+function dirty() { if (!S.raf) S.raf = requestAnimationFrame(frame); }
+function frame(now) {
+  S.raf = 0;
+  for (const a of S.anims) {
+    const k = a.dur ? Math.min(1, (now - a.t0) / a.dur) : 1, e = ease(k);
+    if (a.kind === "cam") for (const key in a.to) S.cam[key] = a.from[key] + (a.to[key] - a.from[key]) * e;
+    if (a.kind === "layout") for (const n of S.nodes) { n.p.x += (n.q.x - n.p.x) * (k < 1 ? 0.18 : 1); n.p.y += (n.q.y - n.p.y) * (k < 1 ? 0.18 : 1); n.p.z += (n.q.z - n.p.z) * (k < 1 ? 0.18 : 1); }
+    a.k = k;
+  }
+  draw(now);
+  S.anims = S.anims.filter(a => a.k < 1);
+  if (S.anims.length || pulsing()) dirty();
+}
+// Rule matches keep a slow ripple so threats stay findable; off for reduced motion, paused in hidden tabs.
+const pulsing = () => !REDUCED && S.visible.some(n => n.trigger && (n.severity === "high" || n.severity === "medium"));
+function drawPulses(now) {
+  for (const n of S.visible) {
+    if (!n.trigger || (n.severity !== "high" && n.severity !== "medium")) continue;
+    if (S.hl && !S.hl.has(n.id)) continue;
+    const p = S.screen.get(n.id); if (!p) continue;
+    const r = Math.max(2.2, (n.in_chain ? 0.55 : 0.32) * p.s), high = n.severity === "high";
+    const period = high ? 1900 : 2800;
+    for (const off of high ? [0, 0.5] : [0]) {
+      const k = ((now / period) + off + (n.t % 997) / 997) % 1;
+      ctx.strokeStyle = high ? `rgba(239,68,68,${0.55 * (1 - k)})` : `rgba(245,165,36,${0.4 * (1 - k)})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 3 + k * (high ? 14 : 9), 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+}
+
+// ---------------------------------------------------------------- drawing
+function draw(now) {
+  const { w, h } = viewSize();
+  ctx.clearRect(0, 0, w, h);
+  drawFloor();
+  drawTimeAxis();
+  S.screen = new Map();
+  for (const n of S.visible) { const p = project(n.p); if (p) S.screen.set(n.id, p); }
+  const dimmed = id => S.hl && !S.hl.has(id);
+  // edges, far to near
+  const es = S.visEdges.map(e => ({ e, a: S.screen.get(e.a), b: S.screen.get(e.b) })).filter(x => x.a && x.b)
+    .sort((u, v) => (v.a.d + v.b.d) - (u.a.d + u.b.d));
+  for (const { e, a, b } of es) {
+    const na = S.byId.get(e.a), nb = S.byId.get(e.b);
+    const inc = na.in_chain && nb.in_chain;
+    const faded = dimmed(e.a) || dimmed(e.b);
+    let alpha = inc ? 0.75 : 0.22;
+    if (faded) alpha = 0.05;
+    ctx.strokeStyle = e.time_adjusted ? `rgba(245,165,36,${alpha})` : `rgba(226,232,240,${alpha})`;
+    ctx.lineWidth = inc ? 1.4 : 1;
+    ctx.setLineDash(e.basis === "inferred" ? [5, 4] : []);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // nodes, far to near
+  const ns = S.visible.map(n => ({ n, p: S.screen.get(n.id) })).filter(x => x.p).sort((u, v) => v.p.d - u.p.d);
+  for (const { n, p } of ns) {
+    const base = n.in_chain ? 0.55 : 0.32, r = Math.max(2.2, base * p.s * (n.id === S.hover ? 1.35 : 1));
+    const faded = dimmed(n.id);
+    ctx.globalAlpha = faded ? 0.12 : (n.in_chain || !S.seq.length ? 1 : 0.42);
+    if (n.in_chain && !faded) {
+      const g = ctx.createRadialGradient(p.x, p.y, r * 0.4, p.x, p.y, r * 3.2);
+      g.addColorStop(0, GLOW[n.source]); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, r * 3.2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = COLOR[n.source];
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    if (n.rules.length) { ctx.strokeStyle = THREAT; ctx.lineWidth = n.severity === "high" ? 1.4 : 1; ctx.beginPath(); ctx.arc(p.x, p.y, r + 2.2, 0, Math.PI * 2); ctx.stroke(); }
+    if (n.correction_s || n.uncertainty_s === null) {
+      ctx.strokeStyle = AMBER; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 5, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (n.id === S.sel) {
+      ctx.strokeStyle = ACCENT; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 0.18; ctx.fillStyle = ACCENT; ctx.beginPath(); ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = faded ? 0.12 : 1;
+    if (n.in_chain && (p.s > 9 || n.id === S.sel)) {
+      ctx.fillStyle = "#cbd5e1"; ctx.font = "500 10px " + getComputedStyle(document.body).getPropertyValue("--mono");
+      ctx.fillText(`E${n.step}`, p.x + r + 4, p.y - r - 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (!REDUCED && now) drawPulses(now);
+  // transient effects
+  for (const a of S.anims) {
+    if (a.kind === "pulse") {
+      const A = S.screen.get(a.a), B = S.screen.get(a.b); if (!A || !B) continue;
+      const k = ease(a.k || 0), x = A.x + (B.x - A.x) * k, y = A.y + (B.y - A.y) * k;
+      ctx.fillStyle = ACCENT; ctx.shadowColor = ACCENT; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+    }
+    if (a.kind === "flash") {
+      const P = S.screen.get(a.id); if (!P) continue;
+      const k = a.k || 0;
+      ctx.strokeStyle = `rgba(239,68,68,${1 - k})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(P.x, P.y, 8 + 26 * k, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+}
+function drawTimeAxis() {
+  // Ticks at real events (x is time with idle gaps compressed, so ticks follow events, not a fixed scale).
+  const vis = [...S.visible].sort((a, b) => a.t - b.t);
+  if (vis.length < 2) return;
+  const spread = S.explode ? 2.6 : 1;
+  const lanes = ["web", "auth", "system"].filter(s => S.layers[s]).map(s => S.flat ? 0 : LANE_Y[s] * spread);
+  const y = Math.min(...lanes) - 3.5;
+  const z = S.flat ? 0 : Math.max(...S.visible.map(n => n.q.z)) + 6;
+  const a = project({ x: vis[0].q.x, y, z }), b = project({ x: vis.at(-1).q.x, y, z });
+  if (!a || !b) return;
+  ctx.strokeStyle = "rgba(148,163,184,.22)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.font = "500 10px Consolas, ui-monospace, monospace"; ctx.fillStyle = "rgba(148,163,184,.75)";
+  const n = Math.min(12, vis.length), seen = new Set();
+  let lastX = -1e9;
+  for (let i = 0; i < n; i++) {
+    const ev = vis[Math.round(i * (vis.length - 1) / (n - 1))];
+    const label = new Date(ev.t).toISOString().slice(11, 19);
+    const p = project({ x: ev.q.x, y, z }), q = project({ x: ev.q.x, y: y + 1.2, z });
+    if (!p || !q || seen.has(label) || Math.abs(p.x - lastX) < 74) continue;   // keep labels apart on screen
+    seen.add(label); lastX = p.x;
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    ctx.fillText(label, p.x - 24, p.y + 13);
+  }
+  ctx.fillStyle = "rgba(148,163,184,.45)";
+  ctx.fillText("TIME (UTC) \u2192", b.x + 8, b.y + 4);
+}
+function drawFloor() {
+  // faint lane planes: one rectangle per source at its lane height, spanning the visible x range
+  if (!S.visible.length) return;
+  const xs = S.visible.map(n => n.q.x), zs = S.visible.map(n => n.q.z);
+  const x0 = Math.min(...xs) - 4, x1 = Math.max(...xs) + 4, z0 = Math.min(...zs) - 6, z1 = Math.max(...zs) + 6;
+  const spread = S.explode ? 2.6 : 1;
+  ctx.font = "500 10px Consolas, ui-monospace, monospace";
+  for (const src of ["system", "auth", "web"]) {
+    if (!S.layers[src]) continue;
+    const y = S.flat ? 0 : LANE_Y[src] * spread;
+    const zz = S.flat ? [LANE_Y[src] * spread * -1 - 3, LANE_Y[src] * spread * -1 + 3] : [z0, z1];
+    const c = [[x0, y, zz[0]], [x1, y, zz[0]], [x1, y, zz[1]], [x0, y, zz[1]]].map(([x, y, z]) => project({ x, y, z }));
+    if (c.some(p => !p)) continue;
+    ctx.strokeStyle = S.explode ? "rgba(148,163,184,.16)" : "rgba(148,163,184,.07)"; ctx.lineWidth = 1;
+    ctx.fillStyle = S.explode ? "rgba(148,163,184,.025)" : "rgba(0,0,0,0)";
+    ctx.beginPath(); c.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = COLOR[src]; ctx.globalAlpha = S.explode || S.flat ? .8 : .45;
+    ctx.fillText(src.toUpperCase() + (S.explode ? " LAYER" : ""), c[0].x + 4, c[0].y - 4); ctx.globalAlpha = 1;
+  }
+}
+
+// ---------------------------------------------------------------- picking + pointer interaction
+function pick(mx, my) {
+  let best = null, bd = 1e9;
+  for (const n of S.visible) {
+    const p = S.screen.get(n.id); if (!p) continue;
+    const r = Math.max(6, (n.in_chain ? 0.55 : 0.32) * p.s + 4);
+    const d = Math.hypot(p.x - mx, p.y - my);
+    if (d < r && p.d < bd + 0.001 * d) { best = n; bd = p.d; }
+  }
+  return best;
+}
+const rect = () => gl.getBoundingClientRect();
+gl.addEventListener("pointerdown", ev => {
+  gl.setPointerCapture(ev.pointerId);
+  S.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  S.drag = { x: ev.clientX, y: ev.clientY, moved: false, pan: ev.button === 2 || ev.shiftKey };
+  gl.classList.add("dragging");
+});
+gl.addEventListener("pointermove", ev => {
+  const r = rect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  if (S.pointers.size === 2 && S.pointers.has(ev.pointerId)) {        // pinch zoom
+    const [a, b] = [...S.pointers.values()], d0 = Math.hypot(a.x - b.x, a.y - b.y);
+    S.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    const [c, d] = [...S.pointers.values()], d1 = Math.hypot(c.x - d.x, c.y - d.y);
+    if (d0 > 0) { S.cam.dist = clamp(S.cam.dist * d0 / d1, 6, 900); dirty(); }
+    return;
+  }
+  if (S.drag) {
+    const dx = ev.clientX - S.drag.x, dy = ev.clientY - S.drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) S.drag.moved = true;
+    S.drag.x = ev.clientX; S.drag.y = ev.clientY;
+    if (S.drag.moved) {
+      if (S.drag.pan) {
+        const k = S.cam.dist / (Math.min(gl.clientWidth, gl.clientHeight) * 1.1);
+        S.cam.tx -= (dx * Math.cos(S.cam.yaw)) * k; S.cam.tz += (dx * Math.sin(S.cam.yaw)) * k; S.cam.ty += dy * k;
+      } else if (!S.flat) {
+        S.cam.yaw += dx * 0.006; S.cam.pitch = clamp(S.cam.pitch + dy * 0.005, -1.45, 1.45);
+      }
+      hideTip(); dirty(); return;
+    }
+  }
+  const n = pick(mx, my);
+  if ((n && n.id) !== S.hover) { S.hover = n ? n.id : null; dirty(); }
+  n ? showTip(n, mx, my) : hideTip();
+});
+gl.addEventListener("pointerup", ev => {
+  S.pointers.delete(ev.pointerId);
+  gl.classList.remove("dragging");
+  if (S.drag && !S.drag.moved) {
+    const r = rect(), n = pick(ev.clientX - r.left, ev.clientY - r.top);
+    select(n ? n.id : null, { focus: false });
+  }
+  S.drag = null;
+});
+gl.addEventListener("pointerleave", () => { S.hover = null; hideTip(); dirty(); });
+gl.addEventListener("dblclick", ev => { const r = rect(), n = pick(ev.clientX - r.left, ev.clientY - r.top); if (n) select(n.id, { focus: true }); });
+gl.addEventListener("contextmenu", ev => ev.preventDefault());
+gl.addEventListener("wheel", ev => { ev.preventDefault(); S.cam.dist = clamp(S.cam.dist * Math.exp(ev.deltaY * 0.0012), 6, 900); dirty(); }, { passive: false });
+gl.addEventListener("keydown", ev => {
+  const k = ev.key, step = 0.08;
+  if (k === "ArrowLeft") S.cam.yaw -= step; else if (k === "ArrowRight") S.cam.yaw += step;
+  else if (k === "ArrowUp") S.cam.pitch = clamp(S.cam.pitch + step, -1.45, 1.45); else if (k === "ArrowDown") S.cam.pitch = clamp(S.cam.pitch - step, -1.45, 1.45);
+  else if (k === "+" || k === "=") S.cam.dist *= 0.88; else if (k === "-") S.cam.dist *= 1.14;
+  else if (k === "f" || k === "F") fit(false); else if (k === "r" || k === "R") reset();
+  else if (k === "n" || k === "N") stepTo(S.cur + 1); else if (k === "p" || k === "P") stepTo(S.cur - 1);
+  else if (k === " ") { togglePlay(); } else if (k === "Escape") select(null);
+  else return;
+  ev.preventDefault(); dirty();
+});
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function showTip(n, x, y) {
+  const t = $("tip");
+  t.innerHTML = `<b>${esc(n.action)}</b><br><span class="m">${esc(n.source)} · ${fmtTime(n.t_raw)}${n.correction_s ? " (raw)" : ""}</span>` +
+    (n.user || n.src_ip ? `<br><span class="m">${esc(n.user || "—")} @ ${esc(n.src_ip || n.host)}</span>` : "") +
+    (n.rules.length ? `<br><span style="color:${THREAT}">${n.rules.map(r => esc(r.rule)).join(" ")}</span>` : "") +
+    (n.in_chain ? `<br><span style="color:${ACCENT}">chain step E${n.step}</span>` : "");
+  t.style.display = "block";
+  const { w } = viewSize();
+  t.style.left = Math.min(x + 14, w - 330) + "px"; t.style.top = (y + 14) + "px";
+}
+function hideTip() { $("tip").style.display = "none"; }
+function showEmpty(msg) { $("empty").textContent = msg; $("empty").style.display = "grid"; }
+
+// ---------------------------------------------------------------- selection + highlight sets
+function select(id, opts = {}) {
+  S.sel = id;
+  S.hl = id ? highlightSet(id, S.hlMode) : null;
+  if (S.isolate) layout(false);
+  inspect(id ? S.byId.get(id) : null);
+  if (id) {
+    const n = S.byId.get(id);
+    $("sr").textContent = `Selected ${n.source} event ${n.ref}: ${n.action}`;
+    const i = S.seq.indexOf(id);
+    if (i >= 0 && !opts.fromReplay) { S.cur = i; updateReplayUI(); }
+    if (opts.focus) focusOn(n);
+  }
+  drawTimeline(); dirty();
+}
+function highlightSet(id, mode) {
+  const set = new Set([id]), start = S.byId.get(id);
+  if (mode === "neighbors") { for (const x of S.adj.get(id)) set.add(x.o); return set; }
+  const q = [id];
+  while (q.length) {
+    const cur = q.shift(), cn = S.byId.get(cur);
+    for (const x of S.adj.get(cur)) {
+      const o = S.byId.get(x.o);
+      if (set.has(x.o)) continue;
+      if (mode === "precursors" && !(o.t <= cn.t)) continue;
+      if (mode === "followon" && !(o.t >= cn.t)) continue;
+      set.add(x.o); q.push(x.o);
+    }
+  }
+  return set;
+}
+function focusOn(n) { camTo({ tx: n.p.x, ty: n.p.y, tz: n.p.z, dist: Math.min(S.cam.dist, 42) }, REDUCED ? 0 : 600); }
+
+// ---------------------------------------------------------------- inspector (from the node's own record only)
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function fmtTime(ms) { if (ms == null) return "—"; const d = new Date(ms); return d.toISOString().replace("T", " ").slice(0, 19) + " UTC"; }
+function inspect(n) {
+  $("ins-ref").textContent = n ? n.ref : "";
+  if (!n) { $("ins").innerHTML = '<div class="ins-empty">Click an event in the graph or timeline to inspect its original record, the rules it matched and why it is part of the incident.</div>'; return; }
+  const rows = [["source", n.source], ["event type", n.event_type], ["user", n.user], ["source IP", n.src_ip],
+                ["host", n.host], ["session", n.session_id], ["outcome", n.outcome], ["details", n.details]]
+    .filter(([, v]) => v).map(([k, v]) => `<div class="a">${esc(k)}</div><div class="b">${esc(v)}</div>`).join("");
+  let time = `<div class="a">logged</div><div class="b">${fmtTime(n.t_raw)}</div>`;
+  if (n.correction_s) time += `<div class="a">corrected</div><div class="b" style="color:${AMBER}">${fmtTime(n.t)} (+${(n.correction_s / 60).toFixed(1)} min)</div>` +
+    `<div class="a">uncertainty</div><div class="b">${n.uncertainty_s == null ? "lower bound only" : "true time up to +" + (n.uncertainty_s / 60).toFixed(1) + " min later"}</div>`;
+  else if (n.uncertainty_s === null) time += `<div class="a">clock</div><div class="b" style="color:${AMBER}">possibly skewed — order uncertain</div>`;
+  const why = n.in_chain
+    ? `<div class="box"><b>${esc(S.data.incident_id)} · step E${n.step}</b> <span class="tag ${esc(n.link_basis)}">${esc(n.link_basis)}</span><br><span class="m">${esc(n.linked_by)}</span></div>`
+    : `<div class="box" style="--c:var(--dim)"><span class="m">Not part of the reconstructed incident${n.rules.length ? " — matched a rule but no shared evidence links it to the chain" : ""}.</span></div>`;
+  const rules = n.rules.map(r => `<div class="box" style="--c:${r.severity === "high" ? THREAT : AMBER}"><span class="tag ${esc(r.severity)}">${esc(r.severity)}</span><b>${esc(r.rule)}</b> ${esc(r.title)}</div>`).join("");
+  const tech = n.techniques.map(t => `<span class="tag ${esc(t.confidence)}" title="${esc(t.tactic)}">${esc(t.id)} ${esc(t.name)}${t.confidence === "candidate" ? " (candidate)" : ""}</span>`).join("");
+  const links = S.adj.get(n.id).map(x => {
+    const o = S.byId.get(x.o);
+    return `<div class="box" style="--c:${x.e.time_adjusted ? AMBER : "var(--line)"}"><span class="tag ${esc(x.e.basis)}">${esc(x.e.basis)}</span><a href="#" data-go="${esc(o.id)}" style="color:var(--accent)">${esc(o.ref)}</a><br><span class="m">${esc(x.e.reason)}</span></div>`;
+  }).slice(0, 8).join("");
+  const raw = Object.entries(n.raw).map(([k, v]) => `<div class="a">${esc(k)}</div><div class="b">${esc(v)}</div>`).join("");
+  $("ins").innerHTML =
+    `<div class="act">${esc(n.action)}</div>` +
+    `<div class="k">Why it is here</div>${why}` +
+    `<div class="k">Time</div><div class="row">${time}</div>` +
+    `<div class="k">Normalized fields</div><div class="row">${rows}</div>` +
+    (rules ? `<div class="k">Rule matches</div>${rules}` : "") +
+    (tech ? `<div class="k">ATT&amp;CK</div><div>${tech}</div>` : "") +
+    (links ? `<div class="k">Links (${S.adj.get(n.id).length})</div>${links}` : "") +
+    `<div class="k">Original record</div><div class="row">${raw}</div>` +
+    `<div class="ins-btns"><button id="b-focus">Focus camera</button><button id="b-send" title="Open this record in the Evidence explorer below">Send to explorer</button></div>`;
+  $("b-focus").onclick = () => focusOn(n);
+  $("b-send").onclick = () => ST.value({ selected: n.id, ref: n.ref, data_id: S.dataId });
+  $("ins").querySelectorAll("a[data-go]").forEach(a => a.onclick = ev => { ev.preventDefault(); select(a.dataset.go, { focus: true }); });
+}
+
+
+// ---------------------------------------------------------------- kill-chain ribbon (ATT&CK tactics of the chain)
+const TACTICS = ["Reconnaissance", "Initial Access", "Credential Access", "Discovery", "Lateral Movement",
+                 "Collection", "Persistence", "Exfiltration"];
+function drawRibbon() {
+  const chain = S.seq.map(id => S.byId.get(id));
+  const cur = S.cur >= 0 ? S.byId.get(S.seq[S.cur]) : null;
+  const html = TACTICS.map(t => {
+    const hits = chain.filter(n => n.techniques.some(x => x.tactic === t));
+    if (!hits.length) return `<div class="st" role="listitem" title="${t}: not observed">${t}<small>—</small></div>`;
+    const first = hits[0];
+    const done = cur && hits.some(n => n.step <= cur.step);
+    const now = cur && cur.techniques.some(x => x.tactic === t);
+    const ids = [...new Set(hits.flatMap(n => n.techniques.filter(x => x.tactic === t).map(x => x.id)))].join(" ");
+    const cls = now ? "now" : done ? "done" : "seen";
+    return `<div class="st ${cls}" role="listitem" data-go="${first.id}" title="${t}: ${ids} · first at E${first.step}">${t}<small>${ids} · E${first.step}</small></div>`;
+  }).join("");
+  const r = $("ribbon");
+  r.innerHTML = html;
+  r.querySelectorAll("[data-go]").forEach(el => el.onclick = () => { stop(); select(el.dataset.go, { focus: true }); });
+}
+
+// ---------------------------------------------------------------- replay
+function stepTo(i) {
+  if (!S.seq.length) return;
+  i = clamp(i, 0, S.seq.length - 1);
+  // skip steps hidden by filters
+  const dir = i >= S.cur ? 1 : -1;
+  while (i >= 0 && i < S.seq.length && !passes(S.byId.get(S.seq[i]))) i += dir;
+  if (i < 0 || i >= S.seq.length) { stop(); return; }
+  const prev = S.cur >= 0 ? S.seq[S.cur] : null, id = S.seq[i];
+  S.cur = i;
+  select(id, { fromReplay: true });
+  if (!REDUCED) {
+    if (prev && S.adj.get(prev).some(x => x.o === id)) animate({ kind: "pulse", a: prev, b: id, dur: 520 / S.speed });
+    if (S.byId.get(id).rules.length) animate({ kind: "flash", id, dur: 700 });
+    const n = S.byId.get(id); camTo({ tx: S.cam.tx + (n.p.x - S.cam.tx) * 0.35, ty: S.cam.ty, tz: S.cam.tz }, 380);
+  }
+  updateReplayUI();
+}
+function togglePlay() { S.playing ? stop() : play(); }
+function play() {
+  if (!S.seq.length) return;
+  if (S.cur >= S.seq.length - 1) S.cur = -1;
+  S.playing = true; updateReplayUI(); tick();
+}
+function tick() {
+  if (!S.playing) return;
+  if (S.cur >= S.seq.length - 1) { stop(); return; }
+  stepTo(S.cur + 1);
+  S.timer = setTimeout(tick, 1100 / S.speed);
+}
+function stop() { S.playing = false; clearTimeout(S.timer); updateReplayUI(); }
+function updateReplayUI() {
+  drawRibbon();
+  const has = S.seq.length > 0;
+  ["first", "prev", "play", "next", "last", "scrub"].forEach(id => $(id).disabled = !has);
+  $("play").textContent = S.playing ? "⏸ Pause" : "▶ Play";
+  $("play").setAttribute("aria-label", S.playing ? "Pause" : "Play");
+  $("scrub").max = Math.max(0, S.seq.length - 1); $("scrub").value = Math.max(0, S.cur);
+  if (!has) { $("tl-now").innerHTML = "No reconstructed chain to replay."; return; }
+  if (S.cur < 0) { $("tl-now").innerHTML = `${S.seq.length} chain steps · press ▶ to replay`; return; }
+  const n = S.byId.get(S.seq[S.cur]);
+  $("tl-now").innerHTML = `<b>E${n.step}/${S.seq.length}</b> · ${fmtTime(n.t).slice(11, 19)}${n.correction_s ? "*" : ""} · ${esc(n.source)} · ${esc(n.action).slice(0, 42)}`;
+  drawTimeline();
+}
+$("first").onclick = () => { stop(); stepTo(0); };
+$("last").onclick = () => { stop(); stepTo(S.seq.length - 1); };
+$("prev").onclick = () => { stop(); stepTo(S.cur - 1); };
+$("next").onclick = () => { stop(); stepTo(S.cur + 1); };
+$("play").onclick = togglePlay;
+$("speed").onchange = ev => { S.speed = +ev.target.value; };
+$("scrub").oninput = ev => { stop(); stepTo(+ev.target.value); };
+
+// ---------------------------------------------------------------- timeline (2D, synchronized)
+function tlWindow() {
+  const pool = (S.seq.length && S.scope !== "all") ? S.seq.map(id => S.byId.get(id)) : S.visible;
+  if (!pool.length) return null;
+  let a = Math.min(...pool.map(n => Math.min(n.t, n.t_raw))), b = Math.max(...pool.map(n => Math.max(n.t, n.t_raw + 1000 * (n.correction_s || 0) + 1000 * (n.uncertainty_s || 0))));
+  const pad = Math.max(20000, (b - a) * 0.04);
+  return [a - pad, b + pad];
+}
+function drawTimeline() {
+  const w = tlc.clientWidth, h = tlc.clientHeight;
+  tctx.clearRect(0, 0, w, h);
+  const win = tlWindow(); if (!win) return;
+  const L = 58, R = w - 12, X = t => L + (t - win[0]) / (win[1] - win[0]) * (R - L);
+  const lanes = { web: 24, auth: 58, system: 92 };
+  tctx.font = "500 10px Consolas, ui-monospace, monospace";
+  // ticks
+  const span = (win[1] - win[0]) / 1000, steps = [30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+  const stepS = steps.find(s => span / s <= 9) || 7200;
+  const first = Math.ceil(win[0] / 1000 / stepS) * stepS;
+  tctx.fillStyle = "#5b6673"; tctx.strokeStyle = "rgba(148,163,184,.08)";
+  for (let s = first; s * 1000 <= win[1]; s += stepS) {
+    const x = X(s * 1000); tctx.beginPath(); tctx.moveTo(x, 8); tctx.lineTo(x, h - 14); tctx.stroke();
+    tctx.fillText(new Date(s * 1000).toISOString().slice(11, 16), x - 14, h - 2);
+  }
+  for (const src of ["web", "auth", "system"]) {
+    tctx.fillStyle = S.layers[src] ? COLOR[src] : "#3b434d"; tctx.fillText(src.toUpperCase(), 4, lanes[src] + 3);
+    tctx.strokeStyle = "rgba(148,163,184,.10)"; tctx.beginPath(); tctx.moveTo(L, lanes[src]); tctx.lineTo(R, lanes[src]); tctx.stroke();
+  }
+  S.tlHits = [];
+  const curId = S.cur >= 0 ? S.seq[S.cur] : null;
+  for (const n of S.nodes) {
+    if (!passes(n) || !inScope(n)) continue;
+    const y = lanes[n.source], x = X(n.t);
+    if (x < L - 2 || x > R + 2) continue;
+    if (n.correction_s) {              // raw position (hollow), corrected position, and the uncertainty range
+      const xr = X(n.t_raw);
+      tctx.strokeStyle = "rgba(245,165,36,.55)"; tctx.setLineDash([2, 2]);
+      tctx.beginPath(); tctx.moveTo(xr, y); tctx.lineTo(x, y); tctx.stroke(); tctx.setLineDash([]);
+      tctx.beginPath(); tctx.arc(xr, y, 3, 0, Math.PI * 2); tctx.stroke();
+      if (n.uncertainty_s) { tctx.fillStyle = "rgba(245,165,36,.16)"; tctx.fillRect(x, y - 7, X(n.t + n.uncertainty_s * 1000) - x, 14); }
+    }
+    const big = n.in_chain;
+    tctx.globalAlpha = big || !S.seq.length ? 1 : 0.35;
+    tctx.fillStyle = COLOR[n.source];
+    tctx.beginPath(); tctx.arc(x, y, big ? 4 : 2.5, 0, Math.PI * 2); tctx.fill();
+    if (n.rules.length) { tctx.strokeStyle = THREAT; tctx.lineWidth = 1.2; tctx.beginPath(); tctx.arc(x, y, (big ? 4 : 2.5) + 2, 0, Math.PI * 2); tctx.stroke(); }
+    tctx.globalAlpha = 1;
+    if (n.id === S.sel) { tctx.strokeStyle = ACCENT; tctx.lineWidth = 1.5; tctx.beginPath(); tctx.arc(x, y, 8, 0, Math.PI * 2); tctx.stroke(); }
+    S.tlHits.push({ id: n.id, x, y });
+  }
+  if (curId) {   // replay cursor
+    const x = X(S.byId.get(curId).t);
+    tctx.strokeStyle = ACCENT; tctx.lineWidth = 1; tctx.beginPath(); tctx.moveTo(x, 6); tctx.lineTo(x, h - 14); tctx.stroke();
+  }
+  tctx.lineWidth = 1;
+}
+tlc.addEventListener("click", ev => {
+  const r = tlc.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  let best = null, bd = 10;
+  for (const p of S.tlHits || []) { const d = Math.hypot(p.x - mx, p.y - my); if (d < bd) { bd = d; best = p; } }
+  if (best) { stop(); select(best.id, { focus: true }); }
+});
+
+// ---------------------------------------------------------------- toolbar
+function setPressed(btn, on) { btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", String(on)); }
+document.querySelectorAll("button.chip").forEach(b => b.onclick = () => {
+  const src = b.dataset.src; S.layers[src] = !S.layers[src]; setPressed(b, S.layers[src]); layout(false); drawTimeline();
+});
+$("explode").onclick = () => { S.explode = !S.explode; setPressed($("explode"), S.explode); layout(false); fit(false); };
+$("flat").onclick = () => { S.flat = !S.flat; setPressed($("flat"), S.flat); layout(false); fit(false); };
+$("scope").onchange = ev => { S.scope = ev.target.value; layout(false); fit(false); drawTimeline(); };
+$("hlmode").onchange = ev => { S.hlMode = ev.target.value; if (S.sel) select(S.sel); };
+$("isolate").onclick = () => { S.isolate = !S.isolate; setPressed($("isolate"), S.isolate); layout(false); if (S.isolate) fit(false); };
+$("flagged").onclick = () => { S.flaggedOnly = !S.flaggedOnly; setPressed($("flagged"), S.flaggedOnly); layout(false); drawTimeline(); };
+$("rulef").onchange = ev => { S.ruleFilter = ev.target.value; layout(false); drawTimeline(); };
+$("fit").onclick = () => fit(false);
+$("reset").onclick = reset;
+function reset() {
+  stop(); S.cur = -1; S.isolate = false; setPressed($("isolate"), false);
+  S.explode = false; setPressed($("explode"), false); S.flat = false; setPressed($("flat"), false);
+  Object.assign(S.cam, { yaw: -0.5, pitch: 0.46 }); select(null); layout(false); fit(false); updateReplayUI();
+}
+
+// ---------------------------------------------------------------- sizing (crisp on HiDPI) and frame height
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  for (const [c, cx] of [[gl, ctx], [tlc, tctx]]) {
+    const w = c.clientWidth, h = c.clientHeight;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  dirty(); drawTimeline();
+  ST.height(document.getElementById("app").getBoundingClientRect().height + 2);
+}
+new ResizeObserver(() => resize()).observe(document.getElementById("app"));
+window.addEventListener("beforeunload", () => { stop(); cancelAnimationFrame(S.raf); });
+ST.ready();
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+Team meeting notes for the hackathon project.
+We agreed that the timeline view should be finished before the report is written.
+Someone needs to rehearse the demo at least twice before Thursday morning.
+The slides should explain the clock skew result in plain language for the judges.

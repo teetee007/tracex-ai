@@ -1,0 +1,5 @@
+{
+  "name": "TC-04: Timestamp inconsistency",
+  "description": "The TC-01 attack with a web log in IST (+05:30), the web-01 system clock 5 minutes behind the SSO server, and two web rows written out of order.",
+  "syslog_year": 2026
+}

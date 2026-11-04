@@ -1,172 +1,338 @@
-"""TraceX AI — Streamlit interface.  Run:  streamlit run app.py"""
+"""TraceX AI — Streamlit interface.  Run:  python -m streamlit run app.py"""
+import os
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
-from tracex.correlate import reconstruct
-from tracex.detections import run_all
+from tracex import custody, features, graph, scene, ui, views
+from tracex.assessment import progression, threat_score
 from tracex.evaluation import evaluate
-from tracex.parsers import SOURCE_FILES, combine, load_dataset, parse_source
+from tracex.parsers import load_dataset
+from tracex.pipeline import analyse
+from tracex.scene3d import scene3d
 from tracex.schema import SOURCES
-from tracex.timeline import timeline_figure
-from tracex.validation import source_coverage, validate
+from tracex.timeline import activity_figure
+from tracex.upload_view import run_uploads
+from tracex.viz3d import activity_terrain
 
 DATA_DIR = Path(__file__).parent / "data"
 
-st.set_page_config(page_title="TraceX AI", page_icon="🔎", layout="wide")
-st.title("🔎 TraceX AI")
-st.caption("Evidence-first cross-source log investigation · synthetic data only")
+st.set_page_config(page_title="TraceX AI", page_icon="🔎", layout="wide", initial_sidebar_state="collapsed")
+ui.inject_css()
 
 
-@st.cache_data
-def cached_load(folder):
-    return load_dataset(folder)
+@st.cache_data(show_spinner="Running all scenarios…")
+def cached_lab():
+    from tracex import lab
+    return lab.run(DATA_DIR)
+
+
+@st.cache_data(show_spinner="Reconstructing…")
+def cached_analysis(folder, clock_aware):
+    """Parsing + the whole engine, cached per dataset and mode: UI interactions never rerun it."""
+    events, info = load_dataset(folder)
+    return analyse(events, clock_aware), info
+
+
+# ---------- Presenter mode: a scripted walk through the demo ----------
+STEPS = features.PRESENTER_STEPS
+
+
+def _go(step):
+    """Button callback (runs before widgets are drawn, so it may set their values)."""
+    s = STEPS[step]
+    st.session_state.update({"presenter_step": step, "mode": "Bundled dataset", "dataset": s["dataset"],
+                             "clock_aware": s["clock"], "presenter_goto": s["page"]})
 
 
 # ---------- Choose the evidence ----------
-mode = st.sidebar.radio("Logs", ["Bundled dataset", "Upload logs"])
+st.sidebar.markdown("### Evidence")
+mode = st.sidebar.radio("Logs", ["Bundled dataset", "Upload logs"], label_visibility="collapsed", key="mode")
+clock_aware = st.sidebar.toggle(
+    "Clock-aware correlation", value=True, key="clock_aware",
+    help="Estimate host clock offsets from login/command ordering and correlate on corrected times. "
+         "Switch off to see the original raw-time behaviour.")
 
 if mode == "Bundled dataset":
     scenarios = sorted(p.name for p in DATA_DIR.iterdir() if p.is_dir()) if DATA_DIR.exists() else []
     if not scenarios:
         st.error("No datasets found. Run `python scripts/generate_synthetic_logs.py` first.")
         st.stop()
-    scenario = st.sidebar.selectbox("Dataset", scenarios)
-    events, info = cached_load(str(DATA_DIR / scenario))
+    scenario = st.sidebar.selectbox("Dataset", scenarios, key="dataset")
+    a, info = cached_analysis(str(DATA_DIR / scenario), clock_aware)
+    a_base, a_aware = (cached_analysis(str(DATA_DIR / scenario), m)[0] for m in (False, True))
+    # Integrity is re-checked on every run (not cached), so a changed file is caught immediately.
+    evidence_files = custody.read_files(DATA_DIR / scenario)
+    manifest = custody.load_manifest(DATA_DIR / scenario)
 else:
-    st.sidebar.caption("Upload any of the three sources. Use synthetic or redacted logs only.")
-    uploads = {
-        "auth": st.sidebar.file_uploader("Authentication log (CSV)", type="csv"),
-        "web": st.sidebar.file_uploader("Web access log (JSON / JSON Lines)", type=["json", "jsonl"]),
-        "system": st.sidebar.file_uploader("System log (CSV)", type="csv"),
-    }
-    year = st.sidebar.number_input("Year for syslog timestamps", 2000, 2100, date.today().year)
-    frames, info = [], {"name": "Uploaded logs", "missing_sources": []}
-    for source, file in uploads.items():
-        if file is None:
-            info["missing_sources"].append(source)
-            continue
-        try:
-            frames.append(parse_source(source, file, file.name, year=year))
-        except Exception as exc:  # a broken file must not take the app down
-            st.sidebar.error(f"Could not read {file.name}: {exc}")
-            info["missing_sources"].append(source)
-    if not frames:
-        st.info("Upload at least one log file in the sidebar, or switch to the bundled dataset. "
-                f"Expected formats match `data/tc01_attack/` ({', '.join(SOURCE_FILES.values())}).")
-        st.stop()
-    events = combine(frames)
+    scenario = "uploaded"
+    year = st.sidebar.number_input("Year for syslog timestamps (logs without a year)", 2000, 2100, date.today().year)
+    uploaded, info, evidence_files = run_uploads(year)
+    manifest = None
+    a = analyse(uploaded, clock_aware)
+    a_base, a_aware = (a, analyse(uploaded, True)) if not clock_aware else (analyse(uploaded, False), a)
 
-issues = validate(events)
-detections = run_all(events)
-incidents = reconstruct(events, detections)
-SEVERITY_ICON = {"high": "🔴", "medium": "🟠", "low": "🟡"}
+st.sidebar.divider()
+presenter = st.sidebar.toggle("Presenter mode", key="presenter",
+                              help="A step-by-step script for the live demo: each step loads the right dataset and page.")
+st.sidebar.caption("All analysis runs locally. Conclusions cite the original log line (`raw_ref`).")
 
-# ---------- Overview ----------
-st.subheader(info.get("name", "Dataset"))
-if info.get("description"):
-    st.write(info["description"])
+# ---------- Analyse ----------
+events, issues, detections, incidents = a.view, a.issues, a.detections, a.incidents
+score, band, breakdown = threat_score(detections)
+
+# A different dataset or mode must not inherit selections made in the previous one.
+state_key = f"{scenario}|{clock_aware}"
+if st.session_state.get("state_key") != state_key:
+    for k in ("explorer_ref", "tl_ref", "ex_pick", "ex_sent_seen", "tamper_result"):
+        st.session_state.pop(k, None)
+    st.session_state["state_key"] = state_key
+
+timed = events["timestamp"].dropna()
+present = [s for s in SOURCES if s in set(events["source"])]
+window = f"{timed.min():%H:%M}–{timed.max():%H:%M} UTC" if not timed.empty else "—"
+custody_result = custody.verify(evidence_files, manifest)
+ui.header([("Dataset", scenario), ("Sources", f"{len(present)}/{len(SOURCES)}"),
+           ("Window", window), ("Events", len(events)),
+           ("Integrity", {"verified": "verified ✓", "tampered": "TAMPERED", "unsealed": "unsealed"}[custody_result["status"]])])
+
+if presenter:
+    step = st.session_state.get("presenter_step", 0)
+    s = STEPS[step]
+    ui.presenter_banner(step + 1, len(STEPS), s["title"], s["say"], f"{s['page'].title()} → {s['tab']}")
+    b1, b2, b3, _ = st.columns([1, 1, 1, 5])
+    b1.button("◀ Back", disabled=step == 0, on_click=_go, args=(max(0, step - 1),), width="stretch")
+    b2.button("Next ▶" if step < len(STEPS) - 1 else "Restart", type="primary", on_click=_go,
+              args=((step + 1) % len(STEPS),), width="stretch")
+    b3.button("Load this step", on_click=_go, args=(step,), width="stretch",
+              help="Load the dataset and page for this step")
+
+if custody_result["status"] == "tampered":
+    st.error("Evidence integrity check FAILED: the logs differ from their sealed custody manifest. "
+             "See Evidence → Chain of custody.")
 if info["missing_sources"]:
     st.warning(f"Missing log sources: {', '.join(info['missing_sources'])}. "
                "Conclusions involving them cannot be verified.")
 
-counts = events["source"].value_counts()
-c = st.columns(5)
-c[0].metric("Events", len(events))
-c[1].metric("Auth", int(counts.get("auth", 0)))
-c[2].metric("Web", int(counts.get("web", 0)))
-c[3].metric("System", int(counts.get("system", 0)))
-c[4].metric("Data-quality issues", len(issues))
-
-selected = st.multiselect("Sources", SOURCES, default=[s for s in SOURCES if s in counts])
-view = events[events["source"].isin(selected)].sort_values("timestamp", na_position="last")
-
-tab_names = ["Investigation", "Timeline", "Events", "Data quality", "Evidence viewer"]
-if info.get("ground_truth"):
-    tab_names.append("Evaluation")
-tabs = dict(zip(tab_names, st.tabs(tab_names)))
-tab_timeline, tab_events, tab_quality, tab_evidence = (
-    tabs["Timeline"], tabs["Events"], tabs["Data quality"], tabs["Evidence viewer"])
-
-with tabs["Investigation"]:
-    if not incidents:
-        st.success("No incident reconstructed: no high-severity pattern was found in these logs.")
-    for inc in incidents:
-        ent = inc.entities
-        st.markdown(f"### {SEVERITY_ICON[inc.severity]} {inc.incident_id} · {inc.title}")
-        st.caption(f"{ent['start']:%Y-%m-%d %H:%M:%S} → {ent['end']:%H:%M:%S} UTC · "
-                   f"users: {', '.join(ent['users']) or '—'} · external IPs: {', '.join(ent['external_ips']) or '—'} · "
-                   f"hosts: {', '.join(ent['hosts']) or '—'} · sessions: {', '.join(ent['sessions']) or '—'}")
-        observed = sum(l.basis == "observed" for l in inc.links)
-        m = st.columns(4)
-        m[0].metric("Events in chain", len(inc.chain))
-        m[1].metric("Sources involved", inc.chain["source"].nunique())
-        m[2].metric("Observed links", observed)
-        m[3].metric("Inferred links", len(inc.links) - observed)
-        st.dataframe(
-            inc.chain[["step", "timestamp", "source", "user", "src_ip", "host", "action",
-                       "detections", "link_basis", "linked_by", "raw_ref"]],
-            hide_index=True)
-        st.caption("**observed** = linked by an identifier written in both logs (session ID, IP address). "
-                   "**inferred** = linked by reasoning (same user on the same host soon after a login); "
-                   "treat as a hypothesis until confirmed.")
-
-    st.markdown("#### Detections")
-    in_incident = {ref for inc in incidents for ref in inc.chain["raw_ref"]}
-    if detections:
-        st.dataframe(pd.DataFrame([{
-            "severity": f"{SEVERITY_ICON[d.severity]} {d.severity}",
-            "rule": d.rule,
-            "finding": d.title,
-            "summary": d.summary,
-            "in incident": "yes" if set(d.refs) & in_incident else "no",
-            "evidence": ", ".join(d.refs[:4]) + (f" … (+{len(d.refs) - 4})" if len(d.refs) > 4 else ""),
-        } for d in detections]), hide_index=True)
-        unlinked = [d for d in detections if not set(d.refs) & in_incident]
-        if unlinked:
-            st.caption(f"{len(unlinked)} detection(s) are not linked to any incident: no shared session, "
-                       "IP or user/host evidence connects them, so they are reported separately.")
+inc = None
+if incidents:
+    if len(incidents) > 1:
+        chosen = st.selectbox("Incident", [f"{i.incident_id} · {i.title}" for i in incidents])
+        inc = incidents[[f"{i.incident_id} · {i.title}" for i in incidents].index(chosen)]
     else:
-        st.write("No suspicious patterns detected.")
+        inc = incidents[0]
+window_range = (inc.entities["start"], inc.entities["end"]) if inc else None
 
-if "Evaluation" in tabs:
-    with tabs["Evaluation"]:
-        result = evaluate(incidents, info["ground_truth"])
-        st.markdown("Reconstructed chain compared with this dataset's `ground_truth.json`.")
-        e = st.columns(4)
-        e[0].metric("Attack events (truth)", result["ground_truth_events"])
-        e[1].metric("Correctly linked", result["correctly_linked"])
-        e[2].metric("Recall", "—" if result["recall"] is None else f"{result['recall']:.0%}")
-        e[3].metric("Precision", "—" if result["precision"] is None else f"{result['precision']:.0%}")
-        st.write("**Missed:**", ", ".join(result["missed"]) or "none")
-        st.write("**False positives:**", ", ".join(result["false_positives"]) or "none")
-        st.caption("Measured on one synthetic scenario that we designed. Results on the other test cases "
-                   "(benign, incomplete, clock problems, unrelated events) are reported separately.")
+high = sum(d.severity == "high" for d in detections)
+ui.kpis([
+    ("Events ingested", len(events), f"{len(present)} log sources", ui.WHITE),
+    ("Incidents", len(incidents), "reconstructed from evidence", ui.RED if incidents else ui.GREEN),
+    ("Linked evidence", len(inc.chain) if inc else 0, "events in the attack chain", ui.ORANGE),
+    ("High-severity detections", high, f"{len(detections)} detections in total", ui.RED if high else ui.GREEN),
+    ("External IPs", len(inc.entities["external_ips"]) if inc else 0, "involved in the incident", ui.RED if inc and inc.entities["external_ips"] else ui.WHITE),
+    ("Data-quality issues", len(issues), "records flagged, none dropped", ui.ORANGE if len(issues) else ui.GREEN),
+])
 
-with tab_timeline:
-    if view["timestamp"].notna().any():
-        st.plotly_chart(timeline_figure(view))
-    untimed = view["timestamp"].isna().sum()
-    if untimed:
-        st.caption(f"{untimed} event(s) without a valid timestamp are not plotted; see Data quality.")
+ctx = views.Context(events, detections, incidents, issues, info, analysis=a)
 
-with tab_events:
-    st.dataframe(view.drop(columns=["raw"]), hide_index=True)
 
-with tab_quality:
-    st.markdown("**Source coverage**")
-    st.dataframe(source_coverage(events), hide_index=True)
-    st.markdown("**Issues** — records are kept, but evidence from them is weaker.")
-    if issues.empty:
-        st.success("No data-quality issues found.")
-    else:
-        st.dataframe(issues, hide_index=True)
+# ---------- Page 1 · Investigate: what happened? ----------
+def page_investigate():
+    t_inv, t_ba, t_exp, t_cc = st.tabs(["Investigation", "Before / after", "Explanation", "Command center"])
+    with t_inv:
+        ui.about("Rebuilds the incident in 3D from the real log records: time runs left to right, each log source is a "
+                 "layer, each actor has its own depth. Press ▶ Play to replay the attack step by step while the "
+                 "kill-chain ribbon lights up each ATT&CK stage; click any event to see its original record and why it "
+                 "belongs to the incident.")
+        data = scene.build(a, scenario, inc)
+        picked = scene3d(data, key=f"scene3d-{state_key}")
+        if picked and picked.get("data_id") == data["data_id"] and picked["ref"] != st.session_state.get("explorer_ref"):
+            st.session_state["explorer_ref"] = picked["ref"]
+            st.switch_page(PAGES["evidence"])
+        views.clock_panel(a)
+    with t_ba:
+        ui.about("Runs the same evidence twice, with raw timestamps and with clock-aware correlation, and draws both "
+                 "side by side. When a host clock is wrong, raw times split the attack and drop events; the corrected "
+                 "view shows what the clock check recovers. Numbers are measured, not claimed.")
+        before_after_view()
+    with t_exp:
+        ui.about("Explains the incident in sentences, each labelled observed, inferred, uncertain or next step and "
+                 "citing the exact log lines it rests on. A checker verifies every citation; an AI model (Gemini or Claude) can optionally "
+                 "rewrite it as a narrative, which is checked the same way.")
+        views.explanation(ctx)
+    with t_cc:
+        command_center()
 
-with tab_evidence:
-    ref = st.selectbox("Original record", view["raw_ref"])
-    if ref:
-        row = view.loc[view["raw_ref"] == ref].iloc[0]
-        st.write(f"**{row['source']}** · {row['raw_timestamp'] or '(no timestamp)'} · {row['action']}")
-        st.json(row["raw"])
+
+def before_after_view():
+    fig, rows = features.before_after(a_base, a_aware, info.get("ground_truth"))
+    if fig is None:
+        st.success("No incident in either mode: there is nothing to compare for this dataset.")
+        return
+    skewed = [f for f in a_aware.clock if f.status in ("skew_detected", "possible_skew")]
+    c = st.columns(len(rows))
+    for col, r in zip(c, rows):
+        with col, st.container(border=True):
+            ui.panel_title(r["mode"])
+            vals = [("Incidents", r["incidents"])]
+            if r["recall"] is not None:
+                vals += [("Attack events linked", f"{r['linked']} ({r['recall']:.0%})"), ("Missed", r["missed"])]
+            ui.facts(vals)
+    with st.container(border=True):
+        ui.panel_title("Same evidence, two clocks", "each dot = one attack-related record · ✕ = not linked to any incident")
+        st.plotly_chart(fig, config={"displayModeBar": False})
+        if skewed:
+            st.caption(skewed[0].explanation)
+        else:
+            st.caption("No clock problem was detected in this dataset, so both views are the same. "
+                       "Load tc04_clock_skew to see the difference.")
+
+
+def command_center():
+    main, side = st.columns([2.35, 1.2])
+    with main, st.container(border=True):
+        if inc:
+            ui.panel_title(f"Attack graph · {inc.incident_id}", "drag nodes · hover an edge for evidence")
+            ui.about("A 2D entity view: who (IPs, accounts) did what to which system, each edge labelled with the "
+                     "chain steps that prove it. ▶ Replay attack rebuilds it in time order.")
+            nodes, edges = graph.build(inc, detections)
+            st.iframe(graph.render_html(nodes, edges, height=600), height=610)
+            ui.graph_legend()
+        else:
+            ui.panel_title("Attack graph")
+            st.success("No incident reconstructed: no high-severity pattern links these events together.")
+    with side:
+        with st.container(border=True):
+            ui.panel_title("Threat score", "rule-based")
+            ui.about("Adds fixed points per distinct rule that fired (20 high, 8 medium, 2 low), capped at 100.")
+            ui.threat_card(score, band, breakdown)
+        with st.container(border=True):
+            steps = progression(inc) if inc else []
+            ui.panel_title("Attack progression", f"{len(steps)} stages")
+            ui.about("Each detection placed on the attack lifecycle in time order, with its chain steps.")
+            if steps:
+                ui.progression(steps)
+            else:
+                st.caption("Nothing to show.")
+    if inc:
+        with st.container(border=True):
+            ui.panel_title("Blast radius", "what the attacker reached")
+            ui.about("Follows the incident from the attacker's address to the accounts it used, the systems it reached "
+                     "and the impact: data accessed, data sent out, persistence. Every box comes from cited events.")
+            br = features.blast_radius(inc, events)
+            st.markdown(features.blast_radius_svg(br), unsafe_allow_html=True)
+            if br["impact"]:
+                st.caption("Evidence: " + " · ".join(f"{w} — {ref}" for w, _, ref, _ in br["impact"]))
+    bottom_left, bottom_right = st.columns([2.35, 1.2])
+    with bottom_left, st.container(border=True):
+        ui.panel_title("Activity terrain (3D)", "events per 15 min × log source · incident window in red")
+        ui.about("A 3D bar chart of how busy each log source was over time; the attack window is red. Drag to rotate.")
+        terrain = activity_terrain(events, window_range)
+        if terrain is not None:
+            st.plotly_chart(terrain, config={"displaylogo": False})
+        with st.expander("2D view"):
+            st.plotly_chart(activity_figure(events, window_range), config={"displayModeBar": False})
+    with bottom_right, st.container(border=True):
+        ui.panel_title("Incident facts", "observed in the logs")
+        if inc:
+            ent = inc.entities
+            minutes = (ent["end"] - ent["start"]).total_seconds() / 60
+            at_risk = inc.chain[inc.chain["detections"].str.contains("R6|R9")]["action"].tolist()
+            ui.facts([
+                ("Incident", f"{inc.incident_id} · {inc.severity.upper()}"),
+                ("Attacker IP", ", ".join(ent["external_ips"]) or "—"),
+                ("Account used", ", ".join(ent["users"]) or "—"),
+                ("Hosts touched", ", ".join(ent["hosts"]) or "—"),
+                ("Sessions", ", ".join(ent["sessions"]) or "—"),
+                ("Window", f"{ent['start']:%H:%M:%S} → {ent['end']:%H:%M:%S} UTC ({minutes:.0f} min)"),
+                ("Data at risk", " | ".join(at_risk) or "none observed"),
+            ])
+        else:
+            st.caption("No incident.")
+    if inc:
+        with st.expander(f"Evidence chain — {len(inc.chain)} steps, each linked to its original log record"):
+            st.dataframe(
+                inc.chain[["step", "timestamp", "source", "user", "src_ip", "host", "action",
+                           "detections", "link_basis", "linked_by", "raw_ref"]],
+                hide_index=True)
+            st.caption("**observed** = linked by an identifier written in both logs (session ID, IP address). "
+                       "**inferred** = linked by reasoning (same user on the same host soon after a login); "
+                       "treat as a hypothesis until confirmed.")
+
+
+# ---------- Page 2 · Evidence: how do we know? ----------
+def page_evidence():
+    t_exp, t_tl, t_det, t_att, t_dq, t_cus = st.tabs(
+        ["Evidence explorer", "Timeline", "Detections", "ATT&CK", "Data quality", "Chain of custody"])
+    with t_exp:
+        ui.about("Every normalized event with search and filters. Pulsing rings mark rule matches (red high, amber "
+                 "medium, grey low); click a row to open the original log record, its chain step and its detections.")
+        views.explorer(ctx)
+    with t_tl:
+        ui.about("All sources on one time axis. Ringed dots belong to the incident; click a dot to inspect it.")
+        views.timeline(ctx, window_range)
+    with t_det:
+        ui.about("The nine detection rules (R1–R9) that fired, each with what triggered it and the exact records as "
+                 "evidence. Detections not linked to the incident are shown as standalone.")
+        views.detections(ctx)
+    with t_att:
+        ui.about("Maps rule matches to MITRE ATT&CK techniques. Lit cells are supported by evidence (red = mapped, amber "
+                 "= candidate); grey cells are techniques TraceX can recognise but did not see. Hover a cell for its "
+                 "evidence.")
+        views.attack(ctx, inc)
+    with t_dq:
+        ui.about("Checks the evidence itself: unreadable timestamps, bad IPs, duplicates, out-of-order rows and clock "
+                 "skew. Problem records are kept and flagged, never silently dropped.")
+        views.data_quality(ctx)
+    with t_cus:
+        ui.about("Proves the logs were not altered: every file and every record is SHA-256 hashed and chained when "
+                 "sealed, then re-verified on every load. The simulator shows how a deleted or edited line is caught.")
+        views.custody_view(evidence_files, manifest, custody_result)
+
+
+# ---------- Page 3 · Validate: does the fix work, and how good is the tool? ----------
+def page_validate():
+    names = ["Mitigation", "Report & exports"] + (["Evaluation"] if info.get("ground_truth") else [])
+    tabs = st.tabs(names)
+    with tabs[0]:
+        ui.about("Replays security policies (account lockout, blocking external SSH) against the recorded logs and "
+                 "shows which attack steps could not have happened, and whether any legitimate user would be hit.")
+        views.mitigation_view(ctx)
+    with tabs[1]:
+        ui.about("Downloads an incident report (HTML / Markdown) and machine-readable exports for real security "
+                 "tools: Sigma rules for a SIEM, an ATT&CK Navigator layer and a STIX 2.1 threat-intel bundle.")
+        views.exports_view(ctx, scenario, custody_result)
+    if len(tabs) > 2:
+        with tabs[2]:
+            ui.about("Scores TraceX against each scenario's ground truth in both modes: precision, recall, missed events, "
+                     "false positives and incident fragmentation. All numbers are measured.")
+            views.lab_view(cached_lab())
+            st.markdown("")
+            ui.panel_title(f"This dataset · {scenario}", "clock-aware" if clock_aware else "baseline")
+            views.evaluation(ctx, evaluate(incidents, info["ground_truth"]))
+
+
+START = os.environ.get("TRACEX_START_PAGE", "investigate")   # lets tests open each page directly
+PAGES = {
+    "investigate": st.Page(page_investigate, title="Investigate", icon=":material/radar:", url_path="investigate",
+                           default=START == "investigate"),
+    "evidence": st.Page(page_evidence, title="Evidence", icon=":material/fingerprint:", url_path="evidence",
+                        default=START == "evidence"),
+    "validate": st.Page(page_validate, title="Validate", icon=":material/verified_user:", url_path="validate",
+                        default=START == "validate"),
+}
+nav = st.navigation(list(PAGES.values()), position="top")
+goto = st.session_state.pop("presenter_goto", None)
+if goto and PAGES[goto] is not nav:
+    st.switch_page(PAGES[goto])
+nav.run()
+
+ui.footer([
+    ("TraceX // evidence engine", ""),
+    (f"{len(events)} events · {len(present)} sources", "ok"),
+    (f"{len(detections)} detections · {high} high", "bad" if high else "ok"),
+    (f"{len(incidents)} incident{'s' if len(incidents) != 1 else ''}", "bad" if incidents else "ok"),
+    ("synthetic data only" if mode == "Bundled dataset" else "uploaded data · stays on this machine", "ok"),
+    ("every conclusion cites a raw_ref", ""),
+])

@@ -4,3 +4,4 @@ plotly>=5.24
 networkx>=3.3
 pyvis>=0.3.2
 pytest>=8.3
+anthropic>=2.3   # optional: AI assist (column mapping, narrative)

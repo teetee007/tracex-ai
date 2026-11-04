@@ -1,0 +1,5 @@
+{
+  "name": "TC-03: Incomplete evidence",
+  "description": "The TC-01 attack, but the system log from web-01 was never collected. The SSH login is visible; what happened on the host afterwards is not.",
+  "syslog_year": 2026
+}

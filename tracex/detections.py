@@ -56,9 +56,11 @@ def _t(ts):
     return ts.strftime("%H:%M:%S")
 
 
-def _raw_field(frame, key):
-    """One field of the original record for every row (works on empty frames too)."""
-    return [json.loads(raw).get(key) for raw in frame["raw"]]
+def _detail(frame, key):
+    """A value from the normalized `details` text ("status=200 bytes=512 ua=Mozilla/5.0 …"), so rules work
+    whatever the original log called the field. `ua` is last and may contain spaces."""
+    pattern = r"\bua=(.*)$" if key == "ua" else rf"\b{key}=(\S*)"
+    return frame["details"].str.extract(pattern, expand=False).fillna("").astype(str)
 
 
 def brute_force(events):
@@ -93,8 +95,11 @@ def brute_force(events):
 def external_remote_login(events):
     """R3: successful login to a server (not the web portal) from an address outside the company."""
     auth = _timed(events, "auth")
+    # A server = a host we have a system log for, OR the target of an SSH login. The second keeps the
+    # rule working when that host's system log was never collected (TC-03).
     system_hosts = set(events.loc[events["source"] == "system", "host"])
-    hits = auth[(auth["outcome"] == "success") & auth["host"].isin(system_hosts) & auth["src_ip"].apply(is_external)]
+    server = auth["host"].isin(system_hosts) | auth["action"].str.contains(" ssh login ", regex=False)
+    hits = auth[(auth["outcome"] == "success") & server & auth["src_ip"].apply(is_external)]
     return [Detection("R3", "Remote login to a server from an external address", "high",
                       f"'{row['user']}' logged in to {row['host']} from {row['src_ip']} at {_t(row['timestamp'])}.",
                       [row["raw_ref"]], {"user": row["user"], "ip": row["src_ip"], "host": row["host"]})
@@ -104,7 +109,7 @@ def external_remote_login(events):
 def automated_client(events):
     """R4: web requests sent by a script or scanning tool instead of a browser."""
     web = _timed(events, "web").copy()
-    web["ua"] = pd.Series([ua or "" for ua in _raw_field(web, "user_agent")], index=web.index, dtype=str)
+    web["ua"] = _detail(web, "ua")
     hits = web[web["ua"].str.contains(AUTOMATED_UA)]
     return [Detection("R4", "Automated tool used against the web portal", "medium",
                       f"{len(g)} requests from {ip} with user agent '{ua}'.",
@@ -134,7 +139,7 @@ def web_scanning(events):
 def sensitive_data_access(events):
     """R6: export/backup/download pages or unusually large responses."""
     web = _timed(events, "web").copy()
-    web["bytes"] = pd.to_numeric(pd.Series(_raw_field(web, "bytes"), index=web.index, dtype=object),
+    web["bytes"] = pd.to_numeric(_detail(web, "bytes"),
                                  errors="coerce").fillna(0)
     path = web["action"].str.split(" ", n=1).str[-1]
     hits = web[(web["outcome"] == "success") & (path.str.contains(SENSITIVE_PATH) | (web["bytes"] > LARGE_RESPONSE_BYTES))]

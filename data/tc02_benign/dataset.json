@@ -1,0 +1,5 @@
+{
+  "name": "TC-02: Benign activity",
+  "description": "A normal night and morning: staff logins (one mistyped password), portal browsing, an admin maintenance session, the backup cron job and an internet scanner. No compromise.",
+  "syslog_year": 2026
+}

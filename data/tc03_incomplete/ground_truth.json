@@ -1,0 +1,43 @@
+{
+  "attack_events": {
+    "auth": [
+      "auth.csv:3",
+      "auth.csv:4",
+      "auth.csv:5",
+      "auth.csv:6",
+      "auth.csv:7",
+      "auth.csv:8",
+      "auth.csv:9",
+      "auth.csv:10",
+      "auth.csv:11",
+      "auth.csv:12",
+      "auth.csv:13",
+      "auth.csv:14",
+      "auth.csv:15",
+      "auth.csv:16",
+      "auth.csv:17",
+      "auth.csv:18"
+    ],
+    "web": [
+      "web_access.json#6",
+      "web_access.json#7",
+      "web_access.json#8",
+      "web_access.json#9"
+    ]
+  },
+  "expected_incidents": 1,
+  "entities": {
+    "attacker_ip": "203.0.113.45",
+    "compromised_user": "jsmith",
+    "attacker_session": "sess-a71c3e"
+  },
+  "expected_gaps": [
+    "missing_source:system",
+    "unverified_host:web-01"
+  ],
+  "expected_techniques": {
+    "T1110.001": "Brute Force: Password Guessing",
+    "T1078": "Valid Accounts",
+    "T1021.004": "Remote Services: SSH"
+  }
+}

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TraceX evidence table</title>
+<style>
+:root { --bg:#0b0b0b; --line:rgba(255,255,255,.09); --text:#ececec; --muted:#8a8a8a; --accent:#67e8f9;
+  --high:#e5484d; --medium:#f08c2e; --low:#9a9a9a; --mono:'JetBrains Mono','Cascadia Mono',Consolas,monospace; }
+* { box-sizing:border-box; }
+html, body { margin:0; background:transparent; color:var(--text); font:12px var(--mono); }
+#wrap { border:1px solid var(--line); background:var(--bg); overflow:auto; scrollbar-color:#3a3a3a #0b0b0b; scrollbar-width:thin; }
+#wrap::-webkit-scrollbar { width:8px; height:8px; }
+#wrap::-webkit-scrollbar-track { background:#0b0b0b; }
+#wrap::-webkit-scrollbar-thumb { background:#3a3a3a; border-radius:4px; }
+#wrap::-webkit-scrollbar-thumb:hover { background:#555; }
+#wrap::-webkit-scrollbar-corner { background:#0b0b0b; }
+table { border-collapse:collapse; width:100%; }
+thead th { position:sticky; top:0; z-index:2; background:#111; color:var(--muted); font-weight:500; text-align:left;
+  font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.16); }
+tbody td { padding:7px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+tbody tr { cursor:pointer; transition:background .12s; }
+tbody tr:hover { background:rgba(103,232,249,.05); }
+tbody tr:focus-visible { outline:1px solid var(--accent); outline-offset:-1px; }
+tbody tr.sel { background:rgba(103,232,249,.10); box-shadow: inset 2px 0 0 var(--accent); }
+td.act { white-space:normal; min-width:240px; color:var(--text); }
+td.ref { color:var(--accent); }
+td.m { color:var(--muted); }
+.src { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; }
+.src.auth { color:#a78bfa; } .src.web { color:#38bdf8; } .src.system { color:#e2e8f0; }
+.out.failure { color:var(--high); } .out.success { color:#46a758; } .out.unknown { color:var(--muted); }
+
+/* severity marker: a solid core with expanding concentric rings */
+.flag { display:flex; align-items:center; gap:10px; min-width:96px; }
+.mk { position:relative; width:9px; height:9px; border-radius:50%; background:var(--c); flex:none;
+  box-shadow:0 0 6px var(--c); }
+.mk::before, .mk::after { content:""; position:absolute; inset:-1px; border-radius:50%; border:1.5px solid var(--c);
+  animation:ripple var(--d,2.4s) cubic-bezier(.2,.6,.3,1) infinite; }
+.mk::after { animation-delay:calc(var(--d,2.4s) / 2); }
+.mk.high { --c:var(--high); --d:2s; }
+.mk.medium { --c:var(--medium); --d:2.8s; }
+.mk.low { --c:var(--low); --d:3.6s; }
+.mk.low::after { display:none; }
+@keyframes ripple { 0% { transform:scale(1); opacity:.9; } 100% { transform:scale(3.4); opacity:0; } }
+.rules { color:var(--text); }
+.warn { color:var(--medium); margin-left:2px; }
+.step { color:var(--accent); }
+@media (prefers-reduced-motion: reduce) { .mk::before, .mk::after { animation:none; opacity:.5; transform:scale(1.8); } }
+#empty { padding:28px; color:var(--muted); text-align:center; }
+</style>
+</head>
+<body>
+<div id="wrap" role="region" aria-label="Events"><table>
+  <thead><tr><th>flag</th><th>time</th><th>source</th><th>user</th><th>source IP</th><th>host</th><th>action</th>
+    <th>outcome</th><th>step</th><th>raw_ref</th></tr></thead>
+  <tbody id="rows"></tbody></table><div id="empty" hidden>No events match these filters.</div></div>
+<script>
+"use strict";
+const ST = {
+  send(type, extra) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*"); },
+  ready() { this.send("streamlit:componentReady", { apiVersion: 1 }); },
+  height(h) { this.send("streamlit:setFrameHeight", { height: h }); },
+  value(v) { this.send("streamlit:setComponentValue", { value: v, dataType: "json" }); },
+};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let lastKey = null, selected = null;
+
+function render(args) {
+  const rows = args.rows || [], key = args.data_key + "|" + rows.length;
+  selected = args.selected || null;
+  const body = document.getElementById("rows");
+  if (key !== lastKey) {               // rebuild only when the data changes; keeps scroll position on reruns
+    lastKey = key;
+    body.innerHTML = rows.map(r => `
+      <tr tabindex="0" data-ref="${esc(r.ref)}" aria-label="${esc(r.ref)} ${esc(r.action)}">
+        <td><div class="flag">${r.sev ? `<span class="mk ${esc(r.sev)}" title="${esc(r.sev)} severity"></span>` : '<span style="width:9px"></span>'}
+          <span class="rules">${esc(r.rules)}</span>${r.issue ? '<span class="warn" title="data-quality issue">⚠</span>' : ""}</div></td>
+        <td class="m">${esc(r.time)}</td><td><span class="src ${esc(r.source)}">${esc(r.source)}</span></td>
+        <td>${esc(r.user)}</td><td class="m">${esc(r.ip)}</td><td class="m">${esc(r.host)}</td>
+        <td class="act">${esc(r.action)}</td><td class="out ${esc(r.outcome)}">${esc(r.outcome)}</td>
+        <td class="step">${r.step ? "E" + r.step : ""}</td><td class="ref">${esc(r.ref)}</td>
+      </tr>`).join("");
+    document.getElementById("empty").hidden = rows.length > 0;
+    body.querySelectorAll("tr").forEach(tr => {
+      const pick = () => { selected = tr.dataset.ref; mark(); ST.value({ ref: selected, t: Date.now() }); };
+      tr.onclick = pick;
+      tr.onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } };
+    });
+  }
+  mark();
+  const wrap = document.getElementById("wrap");
+  wrap.style.height = Math.min(args.height || 520, 38 + 33 * Math.max(rows.length, 1)) + "px";
+  ST.height(wrap.getBoundingClientRect().height + 2);
+}
+function mark() {
+  document.querySelectorAll("#rows tr").forEach(tr => tr.classList.toggle("sel", tr.dataset.ref === selected));
+}
+window.addEventListener("message", ev => { if (ev.data && ev.data.type === "streamlit:render") render(ev.data.args || {}); });
+ST.ready();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "attack_events": {
+    "auth": [],
+    "web": [],
+    "system": []
+  },
+  "expected_incidents": 0,
+  "expected_techniques": {}
+}

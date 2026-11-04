@@ -34,6 +34,7 @@
       "system.csv:10"
     ]
   },
+  "expected_incidents": 1,
   "entities": {
     "attacker_ip": "203.0.113.45",
     "compromised_user": "jsmith",
@@ -46,6 +47,9 @@
     "scanner_ip": "198.51.100.77",
     "benign_failed_login_user": "bob"
   },
+  "expected_gaps": [
+    "untimed"
+  ],
   "expected_techniques": {
     "T1110.001": "Brute Force: Password Guessing",
     "T1078": "Valid Accounts",
