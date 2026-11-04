@@ -5,7 +5,7 @@ and system logs, reconstructs a possible attack sequence, and explains how it wa
 labelling every link as **observed** (a shared identifier in the logs) or **inferred** (reasoning), and
 checking whether the timestamps it relies on can be trusted.
 
-Built for the CS3405 Ethical Hacking and Penetration Testing hackathon by **Tanya Karthikeyan (1RUA24CSE0497)** and **Anjana S (1RUA24CSE0056)**. See [PLAN.md](PLAN.md),
+Built for the CS3405 Ethical Hacking and Penetration Testing hackathon by **Tanya Karthikeyan (1RUA24CSE0497)**. See [PLAN.md](PLAN.md),
 [THREAT_MODEL.md](THREAT_MODEL.md), [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) and
 [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md).
 
